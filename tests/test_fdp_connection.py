@@ -202,3 +202,34 @@ def test_ptdata2_backed_node_raises_not_hangs(monkeypatch):
     conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
     with pytest.raises(FetchDataError, match="PTDATA2"):
         conn.get_data(r"\some_ptdata2_node", tree_name="_efit_tree")
+
+
+def test_get_process_connection_selects_fdp(monkeypatch):
+    import disruption_py.workflow as wf
+    from disruption_py.machine.tokamak import Tokamak
+
+    class _Cfg:
+        # mimic Dynaconf: 'inout' with only 'fdp' present
+        inout = {"fdp": {}}
+
+    monkeypatch.setattr(wf, "resolve_tokamak_from_environment", lambda t: Tokamak.D3D)
+    monkeypatch.setattr(wf, "config", lambda tok: _Cfg())
+    # ProcessFDPConnection.from_config calls fdp_mod.config directly; patch it too
+    # so the test does no real Dynaconf/file I/O.
+    monkeypatch.setattr(fdp_mod, "config", lambda tok: _Cfg())
+    conn = wf.get_process_connection(Tokamak.D3D)
+    assert isinstance(conn, ProcessFDPConnection)
+
+
+def test_get_process_connection_defaults_to_mds_when_no_fdp(monkeypatch):
+    import disruption_py.workflow as wf
+    from disruption_py.machine.tokamak import Tokamak
+
+    class _Cfg:
+        inout = {"mds": {"mdsplus_connection_string": None}}
+
+    monkeypatch.setattr(wf, "resolve_tokamak_from_environment", lambda t: Tokamak.D3D)
+    monkeypatch.setattr(wf, "config", lambda tok: _Cfg())
+    conn = wf.get_process_connection(Tokamak.D3D)
+    # ProcessMDSConnection, not FDP
+    assert not isinstance(conn, ProcessFDPConnection)

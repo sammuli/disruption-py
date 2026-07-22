@@ -26,6 +26,7 @@ from disruption_py.core.utils.misc import (
     without_duplicates,
 )
 from disruption_py.inout.base import ProcessConnection
+from disruption_py.inout.fdp import ProcessFDPConnection
 from disruption_py.inout.mds import ProcessMDSConnection
 from disruption_py.inout.sql import ShotDatabase
 from disruption_py.inout.xr import ProcessXarrayConnection
@@ -244,13 +245,19 @@ def get_process_connection(
     tokamak = resolve_tokamak_from_environment(tokamak)
 
     inout_cfg = config(tokamak).inout
+    # FDP is checked first: it is only present when a user opts in via
+    # [<tokamak>.inout.fdp] in user.toml, so the shipped D3D default (mds) wins
+    # unless explicitly overridden.
+    if "fdp" in inout_cfg:
+        return ProcessFDPConnection.from_config(tokamak=tokamak)
+
     if "mds" in inout_cfg:
         return ProcessMDSConnection.from_config(tokamak=tokamak)
 
     if "xarray" in inout_cfg:
         return ProcessXarrayConnection.from_config(tokamak=tokamak)
 
-    raise ValueError("No valid MDSplus or xarray connection found.")
+    raise ValueError("No valid FDP, MDSplus, or xarray connection found.")
 
 
 def _get_database_instance(tokamak, database_initializer):
