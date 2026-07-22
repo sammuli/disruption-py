@@ -135,6 +135,10 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
             t=resolved_tree,
         )
         try:
+            # NOTE: multi-dim (e.g. \psirz, dim_nums=[2]) forwards positional dim
+            # names sized to the request. MdsSignal's data_order/shape handling for
+            # >1-D nodes must be validated against real data (integration test); if
+            # the axis order differs, thread a data_order kwarg through here.
             result = MdsSignal(
                 path, resolved_tree, location=None, dims=dim_names
             ).fetch(self._shot_id)

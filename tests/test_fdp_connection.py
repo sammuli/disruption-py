@@ -135,3 +135,70 @@ def test_mds_fetch_error_is_wrapped(monkeypatch):
     conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
     with pytest.raises(FetchDataError, match="mds"):
         conn.get_data(r"\efit_a_eqdsk:li", tree_name="_efit_tree")
+
+
+class _FakeMdsSignal:
+    """Records constructor args; returns data + one array per requested dim name."""
+    last_args = None
+
+    def __init__(self, expression, treename, location=None, dims=("times",), **kwargs):
+        _FakeMdsSignal.last_args = {
+            "expression": expression,
+            "treename": treename,
+            "location": location,
+            "dims": dims,
+        }
+        self._dims = dims
+
+    def fetch(self, shot):
+        result = {"data": np.array([10.0, 20.0])}
+        for i, name in enumerate(self._dims):
+            result[name] = np.array([float(i), float(i) + 0.5])
+        return result
+
+
+def test_mds_tree_node_routes_and_resolves_nickname(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    conn = FDPDataConnection(202161)
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    data, times = conn.get_data_with_dims(r"\efit_a_eqdsk:li", tree_name="_efit_tree")
+    assert _FakeMdsSignal.last_args["expression"] == r"\efit_a_eqdsk:li"
+    assert _FakeMdsSignal.last_args["treename"] == "efit01"
+    assert _FakeMdsSignal.last_args["location"] is None
+    np.testing.assert_array_equal(data, [10.0, 20.0])
+    np.testing.assert_array_equal(times, [0.0, 0.5])
+
+
+def test_mds_group_is_alias_for_tree_name(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    conn = FDPDataConnection(202161)
+    conn.get_data(r"\fs04", group="d3d")
+    assert _FakeMdsSignal.last_args["treename"] == "d3d"
+
+
+def test_mds_get_dims_only(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    conn = FDPDataConnection(202161)
+    (times,) = conn.get_dims(r"\top.raw:chan", tree_name="bolom")
+    np.testing.assert_array_equal(times, [0.0, 0.5])
+
+
+def test_higher_dim_nums_sizes_dims_and_returns_requested(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    conn = FDPDataConnection(202161)
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    data, dim2 = conn.get_data_with_dims(
+        r"\top.results.geqdsk:psirz", tree_name="_efit_tree", dim_nums=[2]
+    )
+    assert _FakeMdsSignal.last_args["dims"] == ("dim0", "dim1", "dim2")
+    np.testing.assert_array_equal(dim2, [2.0, 2.5])
+
+
+def test_ptdata2_backed_node_raises_not_hangs(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    # Simulate a node enumerated as PTDATA2-backed (deferred work).
+    monkeypatch.setattr(fdp_mod, "_PTDATA2_BACKED_NODES", {r"\some_ptdata2_node"})
+    conn = FDPDataConnection(202161)
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    with pytest.raises(FetchDataError, match="PTDATA2"):
+        conn.get_data(r"\some_ptdata2_node", tree_name="_efit_tree")
