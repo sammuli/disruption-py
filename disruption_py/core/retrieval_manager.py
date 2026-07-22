@@ -12,7 +12,8 @@ from disruption_py.core.physics_method.params import PhysicsMethodParams
 from disruption_py.core.physics_method.runner import populate_shot
 from disruption_py.core.utils.misc import shot_msg
 from disruption_py.inout.base import DataConnection, ProcessConnection
-from disruption_py.inout.mds import MDSConnection, mdsExceptions
+from disruption_py.inout.mds import mdsExceptions
+from disruption_py.inout.nickname import TreeNicknameMixin
 from disruption_py.inout.sql import ShotDatabase
 from disruption_py.machine.tokamak import Tokamak
 from disruption_py.settings.nickname_setting import NicknameSettingParams
@@ -142,7 +143,7 @@ class RetrievalManager:
 
         data_conn = self.process_data_conn.get_shot_connection(shot_id=shot_id)
 
-        if isinstance(data_conn, MDSConnection):
+        if isinstance(data_conn, TreeNicknameMixin):
             data_conn.add_tree_nickname_funcs(
                 tree_nickname_funcs={
                     "_efit_tree": lambda: retrieval_settings.efit_nickname_setting.get_tree_name(
