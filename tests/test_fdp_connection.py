@@ -87,8 +87,12 @@ def test_required_nan_raises(monkeypatch):
 
 
 def test_guarded_imports_are_independent():
-    """A present toksearch must not be clobbered when toksearch_d3d is absent."""
-    import importlib
+    """A present toksearch must not be clobbered when toksearch_d3d is absent.
+
+    Loads a throwaway copy of the module (does NOT reload the shared fdp_mod,
+    which would swap class identities and pollute other tests).
+    """
+    import importlib.util
     import sys
     import types
 
@@ -97,15 +101,18 @@ def test_guarded_imports_are_independent():
     saved = sys.modules.get("toksearch")
     sys.modules["toksearch"] = fake
     try:
-        reloaded = importlib.reload(fdp_mod)
-        assert reloaded.MdsSignal is not None  # not clobbered by td3d absence
-        assert reloaded.PtDataSignal is None  # toksearch_d3d genuinely absent
+        spec = importlib.util.spec_from_file_location(
+            "disruption_py._fdp_import_probe", fdp_mod.__file__
+        )
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+        assert probe.MdsSignal is not None  # not clobbered by td3d absence
+        assert probe.PtDataSignal is None  # toksearch_d3d genuinely absent
     finally:
         if saved is None:
             sys.modules.pop("toksearch", None)
         else:
             sys.modules["toksearch"] = saved
-        importlib.reload(fdp_mod)  # restore genuine (absent) state
 
 
 def test_ptdata_fetch_error_is_wrapped(monkeypatch):
@@ -209,16 +216,17 @@ def test_get_process_connection_selects_fdp(monkeypatch):
     from disruption_py.machine.tokamak import Tokamak
 
     class _Cfg:
-        # mimic Dynaconf: 'inout' with only 'fdp' present
-        inout = {"fdp": {}}
+        inout = {"fdp": {}}  # only fdp present
 
+    sentinel = object()
     monkeypatch.setattr(wf, "resolve_tokamak_from_environment", lambda t: Tokamak.D3D)
     monkeypatch.setattr(wf, "config", lambda tok: _Cfg())
-    # ProcessFDPConnection.from_config calls fdp_mod.config directly; patch it too
-    # so the test does no real Dynaconf/file I/O.
-    monkeypatch.setattr(fdp_mod, "config", lambda tok: _Cfg())
-    conn = wf.get_process_connection(Tokamak.D3D)
-    assert isinstance(conn, ProcessFDPConnection)
+    monkeypatch.setattr(
+        wf.ProcessFDPConnection,
+        "from_config",
+        classmethod(lambda cls, tokamak: sentinel),
+    )
+    assert wf.get_process_connection(Tokamak.D3D) is sentinel
 
 
 def test_get_process_connection_defaults_to_mds_when_no_fdp(monkeypatch):
@@ -226,10 +234,22 @@ def test_get_process_connection_defaults_to_mds_when_no_fdp(monkeypatch):
     from disruption_py.machine.tokamak import Tokamak
 
     class _Cfg:
-        inout = {"mds": {"mdsplus_connection_string": None}}
+        inout = {"mds": {}}  # no fdp -> should pick mds, not fdp
 
+    mds_sentinel = object()
+    fdp_sentinel = object()
     monkeypatch.setattr(wf, "resolve_tokamak_from_environment", lambda t: Tokamak.D3D)
     monkeypatch.setattr(wf, "config", lambda tok: _Cfg())
-    conn = wf.get_process_connection(Tokamak.D3D)
-    # ProcessMDSConnection, not FDP
-    assert not isinstance(conn, ProcessFDPConnection)
+    monkeypatch.setattr(
+        wf.ProcessMDSConnection,
+        "from_config",
+        classmethod(lambda cls, tokamak: mds_sentinel),
+    )
+    monkeypatch.setattr(
+        wf.ProcessFDPConnection,
+        "from_config",
+        classmethod(lambda cls, tokamak: fdp_sentinel),
+    )
+    result = wf.get_process_connection(Tokamak.D3D)
+    assert result is mds_sentinel
+    assert result is not fdp_sentinel
