@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import disruption_py.inout.fdp as fdp_mod
-from disruption_py.core.physics_method.errors import NanDataError
+from disruption_py.core.physics_method.errors import FetchDataError, NanDataError
 from disruption_py.inout.fdp import FDPDataConnection, ProcessFDPConnection
 from disruption_py.inout.nickname import TreeNicknameMixin
 
@@ -84,3 +84,54 @@ def test_required_nan_raises(monkeypatch):
     conn = FDPDataConnection(202161)
     with pytest.raises(NanDataError):
         conn.get_data("ptdata('ip', 202161)", required=True)
+
+
+def test_guarded_imports_are_independent():
+    """A present toksearch must not be clobbered when toksearch_d3d is absent."""
+    import importlib
+    import sys
+    import types
+
+    fake = types.ModuleType("toksearch")
+    fake.MdsSignal = object
+    saved = sys.modules.get("toksearch")
+    sys.modules["toksearch"] = fake
+    try:
+        reloaded = importlib.reload(fdp_mod)
+        assert reloaded.MdsSignal is not None  # not clobbered by td3d absence
+        assert reloaded.PtDataSignal is None  # toksearch_d3d genuinely absent
+    finally:
+        if saved is None:
+            sys.modules.pop("toksearch", None)
+        else:
+            sys.modules["toksearch"] = saved
+        importlib.reload(fdp_mod)  # restore genuine (absent) state
+
+
+def test_ptdata_fetch_error_is_wrapped(monkeypatch):
+    class _BoomPt:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, shot):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(fdp_mod, "PtDataSignal", _BoomPt)
+    conn = FDPDataConnection(202161)
+    with pytest.raises(FetchDataError, match="ptdata"):
+        conn.get_data("ptdata('ip', 202161)")
+
+
+def test_mds_fetch_error_is_wrapped(monkeypatch):
+    class _BoomMds:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, shot):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _BoomMds)
+    conn = FDPDataConnection(202161)
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    with pytest.raises(FetchDataError, match="mds"):
+        conn.get_data(r"\efit_a_eqdsk:li", tree_name="_efit_tree")

@@ -29,11 +29,14 @@ from disruption_py.machine.tokamak import Tokamak
 
 try:
     from toksearch import MdsSignal
-    from toksearch_d3d import PtDataSignal
 except ModuleNotFoundError:
     # Guarded: the FDP signal stack may be absent (e.g. in CI). Real use runs
     # inside an FDP-configured env (`fdp run` / setup_environment()).
     MdsSignal = None
+
+try:
+    from toksearch_d3d import PtDataSignal
+except ModuleNotFoundError:
     PtDataSignal = None
 
 # ptdata('name', shot) or ptdata("name", shot) -- captures the pointname.
@@ -107,7 +110,13 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
             logger.trace(
                 shot_msg("FDP ptdata fetch: {p}"), shot=self._shot_id, p=pointname
             )
-            result = PtDataSignal(pointname).fetch(self._shot_id)
+            try:
+                result = PtDataSignal(pointname).fetch(self._shot_id)
+            except Exception as e:
+                raise FetchDataError(
+                    f"FDP ptdata fetch failed for {pointname!r} "
+                    f"(shot {self._shot_id}): {e}"
+                ) from e
             return result, ("times",)
 
         if path in _PTDATA2_BACKED_NODES:
@@ -125,9 +134,15 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
             p=path,
             t=resolved_tree,
         )
-        result = MdsSignal(path, resolved_tree, location=None, dims=dim_names).fetch(
-            self._shot_id
-        )
+        try:
+            result = MdsSignal(
+                path, resolved_tree, location=None, dims=dim_names
+            ).fetch(self._shot_id)
+        except Exception as e:
+            raise FetchDataError(
+                f"FDP mds fetch failed for {path!r} @ {resolved_tree!r} "
+                f"(shot {self._shot_id}): {e}"
+            ) from e
         return result, dim_names
 
     # --- DataConnection interface -------------------------------------------
