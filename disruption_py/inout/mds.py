@@ -16,6 +16,7 @@ from disruption_py.core.physics_method.errors import NanDataError
 from disruption_py.core.utils.misc import shot_msg
 from disruption_py.core.utils.shared_instance import SharedInstance
 from disruption_py.inout.base import DataConnection, ProcessConnection
+from disruption_py.inout.nickname import TreeNicknameMixin
 from disruption_py.machine.tokamak import Tokamak
 
 try:
@@ -135,7 +136,7 @@ def _better_mds_exceptions(func):
     return wrapper
 
 
-class MDSConnection(DataConnection):
+class MDSConnection(TreeNicknameMixin, DataConnection):
     """
     Wrapper class for MDSPlus Connection class used for handling individual shots.
     """
@@ -371,29 +372,3 @@ class MDSConnection(DataConnection):
         dims = [self.conn.get(f"dim_of({path},{d})").data() for d in dim_nums]
 
         return tuple(dims)
-
-    # nicknames
-
-    def add_tree_nickname_funcs(self, tree_nickname_funcs: Dict[str, Callable]):
-        """
-        Add tree nickname functions to the connection.
-
-        Required because some tree nickname functions require the connection to exist.
-        """
-        self.tree_nickname_funcs.update(tree_nickname_funcs)
-
-    def get_tree_name_of_nickname(self, nickname: str):
-        """
-        Get the tree name that the nickname has been set to or None if the nickname
-        was not set.
-        """
-        if nickname not in self.tree_nicknames and nickname in self.tree_nickname_funcs:
-            self.tree_nicknames[nickname] = self.tree_nickname_funcs[nickname]()
-
-        return self.tree_nicknames.get(nickname, None)
-
-    def tree_name(self, for_name: str) -> str:
-        """
-        The tree name for for_name, whether it is a nickname or tree name itself
-        """
-        return self.get_tree_name_of_nickname(for_name) or for_name
