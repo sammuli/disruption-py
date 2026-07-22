@@ -24,6 +24,7 @@ from disruption_py.core.physics_method.errors import FetchDataError, NanDataErro
 from disruption_py.core.utils.misc import shot_msg
 from disruption_py.core.utils.shared_instance import SharedInstance
 from disruption_py.inout.base import DataConnection, ProcessConnection
+from disruption_py.inout.mds import mdsExceptions
 from disruption_py.inout.nickname import TreeNicknameMixin
 from disruption_py.machine.tokamak import Tokamak
 
@@ -38,6 +39,26 @@ try:
     from toksearch_d3d import PtDataSignal
 except ModuleNotFoundError:
     PtDataSignal = None
+
+
+class FdpFetchError(FetchDataError, mdsExceptions.MdsException):
+    """FDP fetch failure that is BOTH a disruption-py ``FetchDataError`` and an
+    ``mdsExceptions.MdsException``.
+
+    D3D physics methods catch ``mdsExceptions.MdsException`` to trigger
+    per-signal fallbacks; raising this dual-typed error lets those fallbacks
+    fire unchanged over FDP while the error remains a ``DataError``.
+    """
+
+    def __init__(self, message):
+        # Bypass MdsException.__init__ (which may expect a status code) and use
+        # the plain Exception initializer with our message.
+        Exception.__init__(self, message)
+        self.message = message
+
+    def __str__(self):
+        return self.message
+
 
 # ptdata('name', shot) or ptdata("name", shot) -- captures the pointname.
 _PTDATA_RE = re.compile(r"""^\s*ptdata\(\s*['"]([^'"]+)['"]\s*,.*\)\s*$""", re.IGNORECASE)
@@ -113,14 +134,14 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
             try:
                 result = PtDataSignal(pointname).fetch(self._shot_id)
             except Exception as e:
-                raise FetchDataError(
+                raise FdpFetchError(
                     f"FDP ptdata fetch failed for {pointname!r} "
                     f"(shot {self._shot_id}): {e}"
                 ) from e
             return result, ("times",)
 
         if path in _PTDATA2_BACKED_NODES:
-            raise FetchDataError(
+            raise FdpFetchError(
                 f"{path!r}: PTDATA2-backed node is not yet supported over FDP "
                 "(would hang in the Pelican/XRootD env). Deferred to the PTDATA2 "
                 "follow-up; see PTDATA2_HANDOFF.md."
@@ -143,7 +164,7 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
                 path, resolved_tree, location=None, dims=dim_names
             ).fetch(self._shot_id)
         except Exception as e:
-            raise FetchDataError(
+            raise FdpFetchError(
                 f"FDP mds fetch failed for {path!r} @ {resolved_tree!r} "
                 f"(shot {self._shot_id}): {e}"
             ) from e

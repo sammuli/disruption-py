@@ -6,6 +6,7 @@ import pytest
 import disruption_py.inout.fdp as fdp_mod
 from disruption_py.core.physics_method.errors import FetchDataError, NanDataError
 from disruption_py.inout.fdp import FDPDataConnection, ProcessFDPConnection
+from disruption_py.inout.mds import mdsExceptions
 from disruption_py.inout.nickname import TreeNicknameMixin
 
 
@@ -256,3 +257,54 @@ def test_get_process_connection_defaults_to_mds_when_no_fdp(monkeypatch):
     result = wf.get_process_connection(Tokamak.D3D)
     assert result is mds_sentinel
     assert result is not fdp_sentinel
+
+
+def test_fdp_fetch_error_is_dual_typed():
+    from disruption_py.inout.fdp import FdpFetchError
+
+    err = FdpFetchError("boom")
+    assert isinstance(err, FetchDataError)
+    assert isinstance(err, mdsExceptions.MdsException)
+    assert str(err) == "boom"
+
+
+def test_ptdata_fetch_error_caught_as_mdsexception(monkeypatch):
+    """Mirrors the physics-method fallback pattern: except mdsExceptions.MdsException."""
+
+    class _BoomPt:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, shot):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(fdp_mod, "PtDataSignal", _BoomPt)
+    conn = FDPDataConnection(202161)
+    caught = False
+    try:
+        conn.get_data("ptdata('ipsip', 202161)")
+    except mdsExceptions.MdsException:
+        caught = True
+    assert caught
+
+
+def test_mds_fetch_error_caught_as_mdsexception(monkeypatch):
+    class _BoomMds:
+        def __init__(self, *a, **k):
+            pass
+
+        def fetch(self, shot):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _BoomMds)
+    conn = FDPDataConnection(202161)
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    with pytest.raises(mdsExceptions.MdsException):
+        conn.get_data(r"\efit_a_eqdsk:li", tree_name="_efit_tree")
+
+
+def test_ptdata2_guard_is_also_mdsexception(monkeypatch):
+    monkeypatch.setattr(fdp_mod, "_PTDATA2_BACKED_NODES", {r"\some_ptdata2_node"})
+    conn = FDPDataConnection(202161)
+    with pytest.raises(mdsExceptions.MdsException):
+        conn.get_data(r"\some_ptdata2_node", tree_name="efit01")
