@@ -216,7 +216,10 @@ def test_get_process_connection_selects_fdp(monkeypatch):
     from disruption_py.machine.tokamak import Tokamak
 
     class _Cfg:
-        inout = {"fdp": {}}  # only fdp present
+        # Realistic production case: user's [inout.fdp] merges ON TOP of the
+        # shipped [inout.mds] (Dynaconf merge_enabled), so BOTH keys are present.
+        # This pins the "fdp checked first" property — a branch reorder must fail.
+        inout = {"mds": {}, "fdp": {}}
 
     sentinel = object()
     monkeypatch.setattr(wf, "resolve_tokamak_from_environment", lambda t: Tokamak.D3D)
