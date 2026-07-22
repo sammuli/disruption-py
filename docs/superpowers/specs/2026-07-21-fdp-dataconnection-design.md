@@ -100,6 +100,20 @@ The **injection path needs no core edit**: a user passes `connection_initializer
 
 Per the "both" decision: the classes work via `connection_initializer` injection on day one, and a config branch (`[d3d.inout.fdp]` + `workflow` if-ladder entry, selectable via `user.toml` / `DISPY` env) gives the in-tree experience for the eventual merge.
 
+### Fetch-error contract (MdsException-compatible) — added during implementation
+
+The D3D physics methods catch **`mdsExceptions.MdsException`** at ~30 sites to drive per-signal fallbacks (e.g. try `ptdata('ipsip')`, on `MdsException` fall back to `ptdata('ipspr15v')`; try an EFIT node, on failure use a default). For the "physics methods unchanged" promise to hold, the FDP backend's fetch failures must be catchable by those same handlers — but `MdsSignal` only raises real `mdsExceptions` on the tree path, and `PtDataSignal` raises its own (non-MDS) errors, so a plain `FetchDataError` wrapper would silently disable every fallback (→ all-NaN instead of the fallback value).
+
+Resolution: `FDPDataConnection._fetch` wraps all fetch failures (ptdata path, mds path, and the PTDATA2 deny-list raise) in a **dual-typed** exception:
+
+```python
+class FdpFetchError(FetchDataError, mdsExceptions.MdsException): ...
+```
+
+so a single object is caught by both `except mdsExceptions.MdsException` (physics fallbacks fire unchanged) and `except FetchDataError` / `except DataError` (generic disruption-py handlers). `NanDataError` (the `required=True` path) is left as-is — it is `DataError`, not `MdsException`, matching MDS behavior exactly.
+
+**Real-env validation required:** the dual-typing subclasses the *real* MDSplus `MdsException` when MDSplus is installed (the FDP runtime). This is verified here only against the dummy `mdsExceptions` stub (MDSplus absent in the dev/test env). The integration run must confirm (a) `FdpFetchError` constructs cleanly under real MDSplus and (b) a real physics fallback (e.g. `ipsip`→`ipspr15v`) actually fires over FDP.
+
 ## Deferred work — PTDATA2-backed MDSplus nodes (separate follow-up spec)
 
 **Not in scope for this spec.** It is recorded here so the boundary is explicit, and will be brainstormed as its own spec → plan → implementation cycle.
@@ -122,8 +136,9 @@ The follow-up spec will own (rough sketch, to be designed there, not here):
 ## Testing
 
 - **Unit** — dispatch/parsing table with mocked `PtDataSignal` / `MdsSignal`: PTDATA pointname extraction, tree-node routing, nickname resolution, `dim_nums` handling, `required=True` → `NanDataError`.
-- **Integration** (requires `BEARER_TOKEN`) — fetch a small set of known shots through the FDP backend via injection and compare a handful of parameters (Ip, βN, li, kappa) against the atlas `MDSConnection` for the same shots. **Assert closeness, not exact equality** (tolerance-based), to absorb benign backend/interpolation differences. Choose parameters that do **not** depend on PTDATA2-backed nodes (deferred).
-- **Guard** — a node from the deferred PTDATA2 class raises a clear error (does not hang).
+- **Integration** (requires `BEARER_TOKEN`) — fetch a small set of known shots through the FDP backend via injection and compare a handful of parameters (Ip, βN, li, kappa) against the atlas `MDSConnection` for the same shots. **Assert closeness, not exact equality** (tolerance-based), to absorb benign backend/interpolation differences. Choose parameters that do **not** depend on PTDATA2-backed nodes (deferred). *Status:* the shipped `tests/test_fdp_integration.py` is currently a **sanity** test (finiteness + magnitude bounds for Ip and li), not yet a true atlas-vs-FDP parity comparison — the full parity comparison needs MDSplus and the FDP stack co-installed in one environment and is a follow-up.
+- **Error contract** — `FdpFetchError` is both a `FetchDataError` and an `mdsExceptions.MdsException`; a mocked fetch failure is caught by an `except mdsExceptions.MdsException` handler (the physics-fallback pattern). Real-env validation of the fallback firing is pending (see Fetch-error contract above).
+- **Guard** — a node from the deferred PTDATA2 class raises a clear error (does not hang); the guard error is also `MdsException`-compatible.
 - **Nickname** — verify `_efit_tree` resolves to `efit01` with `DummyDatabase` and to the DB-selected tree when a real d3drdb is available.
 
 ## Summary of decisions
@@ -136,5 +151,6 @@ The follow-up spec will own (rough sketch, to be designed there, not here):
 | Mixin location | `disruption_py/inout/nickname.py` |
 | Selection | Both — `connection_initializer` injection now + config branch for in-tree UX |
 | Physics methods | Unchanged (translation layer) |
-| Parity test | Closeness (tolerance), not exact equality |
+| Fetch-error contract | Dual-typed `FdpFetchError(FetchDataError, mdsExceptions.MdsException)` so physics `except mdsExceptions.MdsException` fallbacks fire unchanged (real-env validation pending) |
+| Parity test | Closeness (tolerance), not exact equality (shipped test is sanity-level; full parity is a follow-up) |
 | PTDATA2-backed nodes | Deferred to a separate follow-up spec; this spec only guards against them (fail loudly, never hang) |
