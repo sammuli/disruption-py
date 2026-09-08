@@ -12,6 +12,8 @@
 
 **Out of scope (deferred):** PTDATA2/PTHEAD2-backed tree nodes — this plan only adds a *guard* that fails loudly rather than hanging. Full enumeration + reroute + calibration is a separate spec (see `../../../../PTDATA2_HANDOFF.md` in the repos dir). The SQL layer (`ShotDatabase`) is untouched.
 
+> **Superseded (2026-09-08) — the deferred PTDATA2 work is moot; there is no outstanding follow-on.** This plan assumed PTDATA2/PTHEAD2-backed nodes would hang over Pelican. They do not: they were measured to resolve over **both** transports in a single process (`\fs04`, `\top.nb:pinj` and the raw bolometer channels all fetch correctly over Pelican as well as over `fdp://`). The real hazard was fork-after-XrdCl-use, which is not PTDATA2-specific and was fixed in `xrdcl-pelican-fdp 0.3.0` (shipped via `fdp-core 1.1.9`). `_PTDATA2_BACKED_NODES` therefore ships **empty**, consulted only on the Pelican path, and remains a guard hook rather than a workaround. See `docs/usage/fdp.md` for the current behaviour and the measured numbers.
+
 ---
 
 ## File Structure
