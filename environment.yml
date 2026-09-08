@@ -1,13 +1,13 @@
 # Standalone conda environment for reading DIII-D data over FDP with
-# disruption-py -- no pixi required.
+# disruption-py. No pixi, and none of the FDP data-access stack.
 #
 #   mamba env create -f environment.yml     # or: conda env create -f ...
 #   conda activate disruption-py-fdp
 #
-# This deliberately does NOT install the FDP data-access stack (toksearch,
-# toksearch_d3d, ptdata, xrdcl-pelican, ...). Reading over FDP needs only the
-# fdp:// MDSplus transport, because the origin evaluates everything server-side.
-# See docs/usage/fdp.md.
+# This is the minimal set. Reading over FDP needs only the fdp:// MDSplus
+# transport, because the origin evaluates everything server-side -- so there is
+# no toksearch, no toksearch_d3d, no ptdata, no XRootD and no Pelican client
+# library here. See docs/usage/fdp.md.
 
 name: disruption-py-fdp
 
@@ -19,18 +19,17 @@ dependencies:
   - python=3.12          # disruption-py requires >=3.12,<3.14
 
   # The fdp:// MDSplus transport (libMdsIpFDP.so). Pulls stock conda-forge
-  # MDSplus -- no XRootD, no Pelican client library, no GA data stack.
+  # MDSplus; that plus this one shared library is the whole data path.
   - mdsip-fdp
 
   # Provides `pelican`, used to mint a bearer token. See docs/usage/fdp.md.
   - pelicanplatform
 
-  # For the examples: NetCDF output and plotting.
-  - netcdf4
-  - matplotlib
-
   - pip
   - pip:
-      # Swap for the upstream repo once this is merged, or use an editable
-      # install (`pip install -e .`) if you have the repo checked out.
+      # Swap for the upstream repo once this is merged, or use `pip install -e .`
+      # if you have the repo checked out.
       - disruption-py @ git+https://github.com/sammuli/disruption-py@sammuli/fdp-origin-config
+
+# For examples/fdp_disruption_plots.py only, add:  mamba install matplotlib
+# (numpy/pandas/xarray/scipy/netCDF4 all arrive with disruption-py via pip.)
