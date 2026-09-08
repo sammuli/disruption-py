@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
-DEFAULT_DIR = Path("/fusion/projects/dt/sammuli/fdp_dev/repos/feder-disruption-example")
+DEFAULT_DIR = Path("fdp_output")
 
 # (column, label, scale) -- scale converts to the unit in the label.
 PANELS = [

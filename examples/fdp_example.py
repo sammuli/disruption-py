@@ -33,6 +33,8 @@ Prerequisites:
   - a valid FDP bearer token (run `fdp login` first)
 """
 
+import argparse
+
 import numpy as np
 
 from disruption_py.inout.mds import ProcessMDSConnection
@@ -55,47 +57,59 @@ def fdp_connection():
     # It is not a dependency of this example.
     return ProcessMDSConnection(FDP_D3D)
 
+from disruption_py.inout.sql import DummyDatabase
 from disruption_py.machine.tokamak import Tokamak
 from disruption_py.settings import RetrievalSettings
 from disruption_py.workflow import get_shots_data
 
 
+COLUMNS = ["ip", "beta_n", "li", "kappa"]
+
+
 def main():
     """Fetch ip + a few EFIT parameters for one DIII-D shot over FDP."""
 
-    shot = 161228  # a DIII-D plasma shot; swap for one you care about
-
-    retrieval_settings = RetrievalSettings(
-        # Pick the parameters to compute; disruption-py runs the physics methods
-        # that produce them. "ip" exercises the PTDATA path; the EFIT columns
-        # exercise the MDSplus-over-Pelican path.
-        run_columns=["ip", "beta_n", "li", "kappa"],
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--shot", type=int, default=161228, help="DIII-D shot number")
+    parser.add_argument(
+        "--no-sql",
+        action="store_true",
+        help="skip d3drdb: pin EFIT to efit01 and use a fixed timebase. Needed "
+        "off-site, where the GA SQL server is unreachable.",
     )
+    args = parser.parse_args()
+
+    extra = {}
+    if args.no_sql:
+        # No SQL at all: DummyDatabase supplies no disruption times, so the
+        # timebase and the EFIT tree have to be given explicitly.
+        retrieval_settings = RetrievalSettings(
+            run_columns=COLUMNS,
+            efit_nickname_setting="default",
+            time_setting=np.arange(0.1, 3.0, 0.02),  # seconds
+        )
+        extra["database_initializer"] = DummyDatabase.initializer
+    else:
+        # Default d3drdb connection: disruption times + EFIT-tree selection.
+        retrieval_settings = RetrievalSettings(run_columns=COLUMNS)
 
     result = get_shots_data(
         tokamak=Tokamak.D3D,
-        shotlist_setting=[shot],
+        shotlist_setting=[args.shot],
         retrieval_settings=retrieval_settings,
         # --- this is what sends signal retrieval to the FDP origin ---
         connection_initializer=fdp_connection,
-        # Uses the default d3drdb SQL connection (disruption times + EFIT-tree
-        # selection). OFF-SITE (no d3drdb) alternative — pins EFIT to "efit01"
-        # and needs no SQL:
-        #
-        #   from disruption_py.inout.sql import DummyDatabase
-        #   ... database_initializer=DummyDatabase.initializer,
-        #       retrieval_settings=RetrievalSettings(
-        #           run_columns=["ip", "beta_n", "li", "kappa"],
-        #           efit_nickname_setting="default",
-        #           time_setting=np.arange(0.1, 3.0, 0.02),  # seconds
-        #       ),
         output_setting="dataset",
         num_processes=1,
+        **extra,
     )
 
     print(result)
     peak_ip_ma = float(np.nanmax(np.abs(result["ip"]))) / 1e6
-    print(f"\nShot {shot}: peak |Ip| = {peak_ip_ma:.3f} MA (fetched from the FDP origin)")
+    print(
+        f"\nShot {args.shot}: peak |Ip| = {peak_ip_ma:.3f} MA "
+        "(fetched from the FDP origin)"
+    )
 
 
 if __name__ == "__main__":

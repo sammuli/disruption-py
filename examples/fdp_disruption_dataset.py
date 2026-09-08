@@ -27,6 +27,8 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
+
 from disruption_py.inout.mds import ProcessMDSConnection
 
 # The FDP origin's mdsip relay speaks the ordinary MDSplus thin-client protocol,
@@ -47,6 +49,7 @@ def fdp_connection():
     # It is not a dependency of this example.
     return ProcessMDSConnection(FDP_D3D)
 
+from disruption_py.inout.sql import DummyDatabase
 from disruption_py.machine.tokamak import Tokamak
 from disruption_py.settings import LogSettings, RetrievalSettings
 from disruption_py.workflow import get_shots_data
@@ -64,13 +67,20 @@ def main():
     parser.add_argument(
         "--outdir",
         type=Path,
-        default=Path("/fusion/projects/dt/sammuli/fdp_dev/repos/feder-disruption-example"),
+        default=Path("fdp_output"),
         help="directory for the .nc / .csv output",
     )
     parser.add_argument(
         "--shots", type=int, nargs="*", default=SHOTS, help="override the shot list"
     )
     parser.add_argument("--num-processes", type=int, default=8)
+    parser.add_argument(
+        "--no-sql",
+        action="store_true",
+        help="skip d3drdb: pin EFIT to efit01 and use a fixed timebase. Needed "
+        "off-site, where the GA SQL server is unreachable. Note this drops the "
+        "disruption timebase, so time_until_disrupt will not be populated.",
+    )
     args = parser.parse_args()
 
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +89,15 @@ def main():
 
     # Defaults run every D3D physics method and use the SQL-backed disruption
     # timebase + EFIT-tree selection, which is what the reference dataset uses.
-    retrieval_settings = RetrievalSettings()
+    extra = {}
+    if args.no_sql:
+        retrieval_settings = RetrievalSettings(
+            efit_nickname_setting="default",
+            time_setting=np.arange(0.1, 6.0, 0.02),  # seconds
+        )
+        extra["database_initializer"] = DummyDatabase.initializer
+    else:
+        retrieval_settings = RetrievalSettings()
 
     started = time.time()
     result = get_shots_data(
@@ -91,6 +109,7 @@ def main():
         output_setting=[str(nc_path), str(csv_path)],
         num_processes=args.num_processes,
         log_settings=LogSettings(console_level="INFO"),
+        **extra,
     )
     elapsed = time.time() - started
 
