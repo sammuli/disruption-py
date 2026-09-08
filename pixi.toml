@@ -1,0 +1,79 @@
+# Convenience pixi environment for testing the FDP/Pelican backend in
+# disruption-py end-to-end.
+#
+#   fdp-core-latest        -> the FDP data-access stack from the ga-fdp channel
+#                             (fdp CLI, mdsip-fdp for the fdp:// MDSplus
+#                             transport, ptdata, toksearch, ...) with rolling
+#                             ">=" floors.
+#   disruption-py (this repo) -> installed in development / editable mode.
+#
+# Usage (from this directory):
+#   pixi install
+#   pixi run login          # one-time: mint an FDP bearer token
+#   pixi run example        # run examples/fdp_example.py against the origin
+#   pixi run integration    # opt-in smoke test (fetches real signals)
+#
+# NOTE: this file lives beside disruption-py's poetry pyproject.toml purely as a
+# testing convenience; it is independent of the project's poetry-based build/CI.
+
+[workspace]
+name = "disruption-py-fdp-test"
+channels = ["conda-forge", "ga-fdp"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+
+# FDP / Pelican data-access stack (blessed rolling metapackage from ga-fdp).
+fdp-core-latest = "*"
+
+# disruption-py's own runtime dependencies, pinned here via conda so the
+# editable install below is satisfied by conda packages rather than pulling
+# (potentially ABI-incompatible) copies from PyPI over the FDP stack.
+dynaconf = ">=3.2"
+loguru = ">=0.7"
+numpy = ">=1.26"
+pandas = ">=2.2,<3"   # disruption-py predates pandas 3; keep the tested major
+pyarrow = "*"        # provides pandas[parquet]
+scipy = ">=1.15"
+xarray = ">=2025.1"
+zarr = ">=3.0"
+netcdf4 = ">=1.7"
+tqdm = ">=4.67"
+fsspec = ">=2025.9"
+s3fs = "*"           # provides fsspec[s3]
+pytest = "*"         # the repo's own test suite
+matplotlib = "*"     # examples/fdp_disruption_plots.py
+
+# d3drdb (SQL) access for the example's default database path.
+pyodbc = ">=5.2"
+sqlalchemy = ">=2.0"
+freetds = "*"        # FreeTDS ODBC driver (d3drdb uses driver="FreeTDS")
+unixodbc = "*"       # ODBC driver manager
+
+[pypi-dependencies]
+# disruption-py in development / editable mode (this repo).
+disruption-py = { path = ".", editable = true }
+
+[activation.env]
+# Two devices (d3d, mast) are registered with the fdp CLI; select DIII-D so
+# `fdp run` configures the right Pelican origin / tree paths without prompting.
+FDP_DEFAULT_DEVICE = "d3d"
+# disruption-py's own sql.py (pyodbc + FreeTDS to d3drdb) does not set a TDS
+# protocol version; FreeTDS needs one. Without this the default-database path
+# can fail to connect. (Not needed if you use the DummyDatabase variant.)
+TDSVER = "7.0"
+
+[tasks]
+# One-time authentication (mints an FDP bearer token via the browser flow).
+login = "fdp login"
+# Run the example end-to-end; `fdp run` sets BEARER_TOKEN (and the rest of the
+# FDP environment) before launching python.
+example = "fdp run python examples/fdp_example.py"
+# Opt-in smoke test — proves the origin serves tree nodes, ptdata() TDI and
+# PTDATA2-backed nodes over one stock MDSplus connection.
+integration = "fdp run python -m pytest tests/test_fdp_origin.py -v"
+# Build the example disruption dataset (20 shots, ~5 min on 8 processes).
+dataset = "fdp run python examples/fdp_disruption_dataset.py --num-processes 8"
+# Render example traces from the dataset (one disrupted, one non-disrupted shot).
+plots = "python examples/fdp_disruption_plots.py"

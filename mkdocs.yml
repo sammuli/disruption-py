@@ -64,6 +64,7 @@ nav:
           - Data Connection (Base): usage/data_connection_reference.md
           - SQL Database: usage/sql_database.md
           - MDSplus Connection: usage/mds_connection_reference.md
+          - FDP (Pelican): usage/fdp.md
   - GitHub: https://github.com/MIT-PSFC/disruption-py
 markdown_extensions:
   - attr_list
