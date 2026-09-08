@@ -36,11 +36,37 @@ mdsplus_connection_string = "fdp://fdp-d3d-origin.nationalresearchplatform.org:8
 That's the whole change — it overrides the `"atlas"` default in
 `disruption_py/machine/d3d/config.toml`. Remove the section to go back to atlas.
 
-Then run as usual, inside an FDP-configured environment so `BEARER_TOKEN` is set:
+Then run as usual:
 
 ```bash
 fdp run python your_script.py
 ```
+
+### What the environment actually needs
+
+`fdp run` sets 21 variables, but signal retrieval needs only **a token** —
+either the `BEARER_TOKEN` environment variable or a `~/.fdp/token` file (`fdp
+login` writes the latter). Nothing else is required: no `XRD_PLUGINCONFDIR`, no
+`PTDATA_*`, no `default_tree_path`, no `MDS_PATH`. Nothing touches Pelican or
+reads a tree file locally, so there is nothing to configure — the origin does
+all of it.
+
+That means you can skip `fdp run` entirely and embed this in an environment of
+your own:
+
+```bash
+BEARER_TOKEN="$(cat ~/.fdp/token)" python your_script.py
+```
+
+Verified on the full default parameter set (2 shots, 2 processes, 65 columns)
+with every other FDP variable unset: works with the env var alone, works with
+only the `~/.fdp/token` file, and fails with `MdsIpException` when neither is
+present.
+
+One exception: if you use the **default d3drdb** connection rather than
+`DummyDatabase`, that path still needs `TDSVER` (FreeTDS requires a protocol
+version and `disruption_py/inout/sql.py` does not set one). `fdp run` sets it
+for you; otherwise export `TDSVER=7.0`.
 
 To set it per-script instead of globally, pass the connection string directly:
 
