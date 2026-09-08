@@ -7,7 +7,8 @@
 # This is the minimal set. Reading over FDP needs only the fdp:// MDSplus
 # transport, because the origin evaluates everything server-side -- so there is
 # no toksearch, no toksearch_d3d, no ptdata, no XRootD and no Pelican client
-# library here. See docs/usage/fdp.md.
+# library here. Authentication assumes a token file at ~/.fdp/token, so the
+# pelican client is not installed either. See docs/usage/fdp.md.
 
 name: disruption-py-fdp
 
@@ -21,10 +22,6 @@ dependencies:
   # The fdp:// MDSplus transport (libMdsIpFDP.so). Pulls stock conda-forge
   # MDSplus; that plus this one shared library is the whole data path.
   - mdsip-fdp
-
-  # Provides `pelican`, used to mint a bearer token. See docs/usage/fdp.md.
-  # Not needed if someone hands you a token file for ~/.fdp/token.
-  - pelicanplatform
 
   # For tests/test_fdp_origin.py, the opt-in check that the origin is reachable.
   - pytest

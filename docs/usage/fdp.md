@@ -20,9 +20,9 @@ mamba env create -f environment.yml     # or: conda env create -f ...
 conda activate disruption-py-fdp
 ```
 
-That is the minimal set — 55 packages. It installs stock conda-forge MDSplus
-plus one extra shared library (`mdsip-fdp` → `libMdsIpFDP.so`), `pelican` for
-authentication, and disruption-py via pip. It deliberately does **not** install
+That is the minimal set. It installs stock conda-forge MDSplus plus one extra
+shared library (`mdsip-fdp` → `libMdsIpFDP.so`), and disruption-py via pip. It
+deliberately does **not** install
 the FDP data-access stack: no `toksearch`, no `toksearch_d3d`, no `ptdata`, no
 XRootD, no Pelican client library. None of it is needed, because the origin
 evaluates everything server-side.
@@ -33,8 +33,8 @@ conda package puts it there for you.
 
 ### 2. Authenticate
 
-The transport needs a bearer token. If someone has given you one — the usual
-case for a collaborator — put it at `~/.fdp/token` and export it:
+The transport needs a bearer token, and this environment assumes you have been
+given one. Put it at `~/.fdp/token` and export it:
 
 ```bash
 mkdir -p ~/.fdp && chmod 700 ~/.fdp
@@ -42,18 +42,19 @@ cp /path/to/the/token ~/.fdp/token && chmod 600 ~/.fdp/token
 export BEARER_TOKEN=$(cat ~/.fdp/token)
 ```
 
-The transport also reads `~/.fdp/token` on its own if `BEARER_TOKEN` is unset,
+The transport also reads `~/.fdp/token` on its own when `BEARER_TOKEN` is unset,
 so the export is belt-and-braces — but it makes the dependency explicit, and it
 is what you want in a job script. Tokens are typically good for about a month.
 
-To mint one yourself instead, **in a real terminal** (pelican refuses a new
-consent flow when its stdout is not a TTY):
+**Minting your own** needs the `pelican` client, which is deliberately not part
+of this environment. Either ask whoever supplied the token for a fresh one, or
+grab a standalone binary (`pelican_Linux_x86_64.tar.gz`) from the
+[Pelican releases](https://github.com/PelicanPlatform/pelican/releases) and run,
+**in a real terminal** — it refuses a new consent flow when stdout is not a TTY:
 
 ```bash
 pelican credentials token get read pelican://osg-htc.org:443/fdp-d3d
 ```
-
-Add `--json` for a JSON object and read its `access_token` key.
 
 > If you are inside the GA FDP development environment instead, `pixi.toml` in
 > the repo root pulls the full stack and wraps both steps: `pixi install`, then
