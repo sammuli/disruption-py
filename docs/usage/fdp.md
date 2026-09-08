@@ -11,18 +11,80 @@ connects to.
 
 ## Setup
 
-1. Install the FDP stack, which provides the `fdp://` MDSplus transport
-   (`mdsip-fdp`) and the `fdp` CLI:
+You need exactly two things: the `fdp://` MDSplus transport, and a token.
 
-   ```bash
-   pixi install          # see pixi.toml in the repo root
-   ```
+The transport is a single shared library, `libMdsIpFDP.so`. MDSplus loads it by
+name — it uppercases a URL's scheme, builds `"MdsIp" + SCHEME`, and `dlopen`s
+the result from beside `libMdsShr.so`. Nothing else about your installation
+changes.
 
-2. Mint a token (one-time; opens a browser):
+### Option A — from source, no conda or pixi
 
-   ```bash
-   pixi run login        # == fdp login
-   ```
+Requires `cmake`, a C++ compiler, libcurl headers, and an existing **MDSplus**
+installation. MDSplus *headers* are not needed: the source repo vendors them.
+
+```bash
+git clone https://github.com/sammuli/disruption-py.git
+cd disruption-py
+git checkout sammuli/fdp-origin-config
+
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# Build and install the transport (clones GA-FDP/xrdoss-mdsplus, builds the
+# client only, drops the .so beside your MDSplus libraries, verifies it loads):
+scripts/install_mdsip_fdp.sh
+```
+
+The script auto-detects MDSplus in `$MDSPLUS_DIR`, `$CONDA_PREFIX`,
+`/usr/local/mdsplus`, `/usr/lib64` and `/usr/local/lib`; set `MDSPLUS_DIR` if
+yours is elsewhere, or `SRC=` to build from a checkout you already have.
+
+MDSplus itself is not on PyPI — install it from
+[mdsplus.org](https://www.mdsplus.org) (MIT's apt/yum repos) and make sure its
+Python bindings are importable (`python -c "import MDSplus"`), typically by
+adding `/usr/local/mdsplus/python` to `PYTHONPATH`.
+
+For the token, grab a standalone `pelican` binary from the
+[Pelican releases](https://github.com/PelicanPlatform/pelican/releases)
+(`pelican_Linux_x86_64.tar.gz`) — no conda needed:
+
+```bash
+# Run this in a real terminal: pelican refuses a new consent flow
+# when stdout is not a TTY.
+pelican credentials token get read pelican://osg-htc.org:443/fdp-d3d
+export BEARER_TOKEN="<the JWT it prints>"
+```
+
+Add `--json` to get a JSON object instead and read its `access_token` key.
+Tokens are typically good for about a month.
+
+> **The failure mode to know about.** If MDSplus cannot load the transport, it
+> silently falls back to the ssh-tunnel transport — you get a confusing
+> connection error, not "protocol not found". The install script therefore asks
+> `LoadIo` directly rather than inferring success from a working connection.
+
+### Option B — conda, no pixi
+
+`environment.yml` builds a standalone environment (55 packages) with a
+prebuilt transport, stock conda-forge MDSplus, and nothing else from the FDP
+stack:
+
+```bash
+mamba env create -f environment.yml     # or: conda env create -f ...
+conda activate disruption-py-fdp
+```
+
+Then get a token as in Option A (`pelican` is included).
+
+### Option C — pixi
+
+Inside the GA FDP development environment, `pixi.toml` pulls the full stack:
+
+```bash
+pixi install
+pixi run login          # == fdp login
+```
 
 ## Point disruption-py at the origin
 
@@ -57,6 +119,10 @@ your own:
 ```bash
 BEARER_TOKEN="$(cat ~/.fdp/token)" python your_script.py
 ```
+
+(`~/.fdp/token` is written by `fdp login`. Without the `fdp` package — the
+standalone setup above — export `BEARER_TOKEN` from pelican's output directly,
+or write the JWT to `~/.fdp/token` yourself; the transport reads either.)
 
 Verified on the full default parameter set (2 shots, 2 processes, 65 columns)
 with every other FDP variable unset: works with the env var alone, works with

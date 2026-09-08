@@ -1,0 +1,36 @@
+# Standalone conda environment for reading DIII-D data over FDP with
+# disruption-py -- no pixi required.
+#
+#   mamba env create -f environment.yml     # or: conda env create -f ...
+#   conda activate disruption-py-fdp
+#
+# This deliberately does NOT install the FDP data-access stack (toksearch,
+# toksearch_d3d, ptdata, xrdcl-pelican, ...). Reading over FDP needs only the
+# fdp:// MDSplus transport, because the origin evaluates everything server-side.
+# See docs/usage/fdp.md.
+
+name: disruption-py-fdp
+
+channels:
+  - conda-forge
+  - ga-fdp
+
+dependencies:
+  - python=3.12          # disruption-py requires >=3.12,<3.14
+
+  # The fdp:// MDSplus transport (libMdsIpFDP.so). Pulls stock conda-forge
+  # MDSplus -- no XRootD, no Pelican client library, no GA data stack.
+  - mdsip-fdp
+
+  # Provides `pelican`, used to mint a bearer token. See docs/usage/fdp.md.
+  - pelicanplatform
+
+  # For the examples: NetCDF output and plotting.
+  - netcdf4
+  - matplotlib
+
+  - pip
+  - pip:
+      # Swap for the upstream repo once this is merged, or use an editable
+      # install (`pip install -e .`) if you have the repo checked out.
+      - disruption-py @ git+https://github.com/sammuli/disruption-py@sammuli/fdp-origin-config
