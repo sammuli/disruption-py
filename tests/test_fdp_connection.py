@@ -99,8 +99,12 @@ def test_guarded_imports_are_independent():
 
     fake = types.ModuleType("toksearch")
     fake.MdsSignal = object
-    saved = sys.modules.get("toksearch")
+    saved = {name: sys.modules.get(name) for name in ("toksearch", "toksearch_d3d")}
     sys.modules["toksearch"] = fake
+    # None in sys.modules makes `import toksearch_d3d` raise ModuleNotFoundError,
+    # so the test simulates an absent toksearch_d3d even in an env (like the pixi
+    # one) where it is genuinely installed.
+    sys.modules["toksearch_d3d"] = None
     try:
         spec = importlib.util.spec_from_file_location(
             "disruption_py._fdp_import_probe", fdp_mod.__file__
@@ -108,12 +112,13 @@ def test_guarded_imports_are_independent():
         probe = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(probe)
         assert probe.MdsSignal is not None  # not clobbered by td3d absence
-        assert probe.PtDataSignal is None  # toksearch_d3d genuinely absent
+        assert probe.PtDataSignal is None  # toksearch_d3d simulated absent
     finally:
-        if saved is None:
-            sys.modules.pop("toksearch", None)
-        else:
-            sys.modules["toksearch"] = saved
+        for name, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
 
 
 def test_ptdata_fetch_error_is_wrapped(monkeypatch):
@@ -202,14 +207,14 @@ def test_higher_dim_nums_sizes_dims_and_returns_requested(monkeypatch):
     np.testing.assert_array_equal(dim2, [2.0, 2.5])
 
 
-def test_ptdata2_backed_node_raises_not_hangs(monkeypatch):
+def test_denylisted_node_raises_not_hangs(monkeypatch):
+    """A node on the Pelican-path deny-list fails loudly rather than hanging."""
     monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
-    # Simulate a node enumerated as PTDATA2-backed (deferred work).
-    monkeypatch.setattr(fdp_mod, "_PTDATA2_BACKED_NODES", {r"\some_ptdata2_node"})
+    monkeypatch.setattr(fdp_mod, "_PTDATA2_BACKED_NODES", {r"\some_unresolvable_node"})
     conn = FDPDataConnection(202161)
     conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
-    with pytest.raises(FetchDataError, match="PTDATA2"):
-        conn.get_data(r"\some_ptdata2_node", tree_name="_efit_tree")
+    with pytest.raises(FetchDataError, match="not resolvable"):
+        conn.get_data(r"\some_unresolvable_node", tree_name="_efit_tree")
 
 
 def test_get_process_connection_selects_fdp(monkeypatch):
@@ -308,3 +313,83 @@ def test_ptdata2_guard_is_also_mdsexception(monkeypatch):
     conn = FDPDataConnection(202161)
     with pytest.raises(mdsExceptions.MdsException):
         conn.get_data(r"\some_ptdata2_node", tree_name="efit01")
+
+
+# --- mds_location: fdp:// mdsip transport vs Pelican tree files ---------------
+
+
+def test_derive_fdp_mds_location_builds_mdsip_url_from_origin(monkeypatch):
+    """The catalog's root:// origin becomes the fdp:// mdsip URL, host+port kept."""
+
+    class _Schema:
+        origin_server = "root://fdp-d3d-origin.nationalresearchplatform.org:8443"
+
+    class _Handle:
+        schema = _Schema()
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "fdp", type("m", (), {"catalog": {"d3d": _Handle()}})
+    )
+    assert (
+        fdp_mod._derive_fdp_mds_location("d3d")
+        == "fdp://fdp-d3d-origin.nationalresearchplatform.org:8443/mdsip"
+    )
+
+
+def test_derive_fdp_mds_location_returns_none_without_catalog(monkeypatch):
+    """No catalog (or no origin) is not fatal -- the caller falls back to Pelican."""
+    monkeypatch.setitem(
+        __import__("sys").modules, "fdp", type("m", (), {"catalog": {}})
+    )
+    assert fdp_mod._derive_fdp_mds_location("d3d") is None
+
+
+@pytest.mark.parametrize(
+    "setting, derived, expected",
+    [
+        ("pelican", "fdp://h:1/mdsip", None),          # explicit Pelican wins
+        ("auto", "fdp://h:1/mdsip", "fdp://h:1/mdsip"),  # derived from catalog
+        ("auto", None, None),                           # underivable -> Pelican
+        ("remote://atlas.gat.com", None, "remote://atlas.gat.com"),  # verbatim
+    ],
+)
+def test_resolve_mds_location(monkeypatch, setting, derived, expected):
+    monkeypatch.setattr(fdp_mod, "_derive_fdp_mds_location", lambda device: derived)
+    assert ProcessFDPConnection._resolve_mds_location(setting, "d3d") == expected
+
+
+def test_factory_forwards_mds_location_to_shot_connection(monkeypatch):
+    """The per-process resolution is done once and handed to every shot."""
+    monkeypatch.setattr(
+        fdp_mod, "_derive_fdp_mds_location", lambda device: "fdp://h:1/mdsip"
+    )
+    proc = ProcessFDPConnection()
+    assert proc.mds_location == "fdp://h:1/mdsip"
+    conn = proc.get_shot_connection(shot_id=202161)
+    assert conn._mds_location == "fdp://h:1/mdsip"
+
+
+def test_mds_fetch_uses_the_configured_location(monkeypatch):
+    """MdsSignal is constructed with the fdp:// URL, not location=None."""
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+    conn = FDPDataConnection(202161, mds_location="fdp://h:1/mdsip")
+    conn.add_tree_nickname_funcs({"_efit_tree": lambda: "efit01"})
+    conn.get_data(r"\efit_a_eqdsk:li", tree_name="_efit_tree")
+    assert _FakeMdsSignal.last_args["location"] == "fdp://h:1/mdsip"
+
+
+def test_ptdata2_denylist_only_guards_the_pelican_path(monkeypatch):
+    """Over fdp:// the origin evaluates the record, so the deny-list must not fire."""
+    monkeypatch.setattr(fdp_mod, "_PTDATA2_BACKED_NODES", {r"\fs04"})
+    monkeypatch.setattr(fdp_mod, "MdsSignal", _FakeMdsSignal)
+
+    # Pelican tree files: TDI is client-side, so the node is refused loudly.
+    pelican = FDPDataConnection(202161, mds_location=None)
+    with pytest.raises(FetchDataError, match="not resolvable"):
+        pelican.get_data(r"\fs04", tree_name="d3d")
+
+    # fdp:// mdsip: fetched like any other node.
+    over_fdp = FDPDataConnection(202161, mds_location="fdp://h:1/mdsip")
+    np.testing.assert_array_equal(
+        over_fdp.get_data(r"\fs04", tree_name="d3d"), [10.0, 20.0]
+    )

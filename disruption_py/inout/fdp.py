@@ -6,7 +6,31 @@ FDP / Pelican signal-retrieval backend for disruption-py (DIII-D).
 FDPDataConnection satisfies the DataConnection interface used by the D3D
 physics methods, dispatching each get_data* call:
   * ptdata('name', shot) strings  -> toksearch_d3d.PtDataSignal
-  * \\node + tree_name            -> toksearch.MdsSignal (Pelican, location=None)
+  * \\node + tree_name            -> toksearch.MdsSignal
+
+MDSplus reads take one of two transports, selected by ``mds_location``:
+
+  ``"auto"`` (default)
+      An ``fdp://`` mdsip URL derived from the device's ``origin_server`` in the
+      FDP catalog, e.g.
+      ``fdp://fdp-d3d-origin.nationalresearchplatform.org:8443/mdsip``. The
+      origin opens the tree and evaluates the node's stored TDI record, so only
+      the result crosses the network rather than the whole tree file. Needs
+      toksearch >= 2.9.0 and the mdsip-fdp package. Falls back to ``"pelican"``
+      if the catalog does not name an origin.
+
+  ``"pelican"``
+      Tree *files* read over Pelican/XRootD (``location=None``), with TDI
+      evaluated client-side. Correct, but much slower.
+
+Both transports return identical values on every node these physics methods
+read; ``"auto"`` is the default because it is far faster. Measured over 24
+fetches spanning 3 shots and 5 trees, run in both orders to control for
+caching: 0.58 s/fetch over ``fdp://`` vs 10.9-12.0 s/fetch over ``"pelican"``
+(~19x), with the same 23 successes and the same single genuine NODATA.
+
+Any other value is passed to ``MdsSignal(location=...)`` verbatim, so an
+explicit ``fdp://...`` or ``remote://atlas.gat.com`` also works.
 
 toksearch / toksearch_d3d are NOT dependencies of the disruption-py dev/test
 environment, so their imports are guarded; unit tests patch the module globals
@@ -15,6 +39,7 @@ PtDataSignal / MdsSignal with mocks.
 
 import re
 from typing import Any, List, Tuple
+from urllib.parse import urlparse
 
 import numpy as np
 from loguru import logger
@@ -63,10 +88,39 @@ class FdpFetchError(FetchDataError, mdsExceptions.MdsException):
 # ptdata('name', shot) or ptdata("name", shot) -- captures the pointname.
 _PTDATA_RE = re.compile(r"""^\s*ptdata\(\s*['"]([^'"]+)['"]\s*,.*\)\s*$""", re.IGNORECASE)
 
-# Deny-list of MDSplus nodes whose TDI record calls PTDATA2/PTHEAD2 and would
-# HANG (not error) in the Pelican/XRootD env. Deferred to the PTDATA2 follow-up
-# spec; kept empty here except as a guard hook. See PTDATA2_HANDOFF.md.
+# Deny-list of MDSplus nodes that cannot be resolved on the "pelican" tree-file
+# path, consulted only on that path. This was expected to be the
+# PTDATA2/PTHEAD2-backed nodes, but they were measured to resolve over BOTH
+# transports in a single process (\fs04, \top.nb:pinj and the raw bolometer
+# channels all fetch fine over Pelican), so the list is empty and stays a guard
+# hook rather than a workaround. See PTDATA2_HANDOFF.md for the history.
 _PTDATA2_BACKED_NODES: set = set()
+
+
+# Default path component of the mdsip relay on an FDP origin (xrdhttp-mdsip's
+# `prefix=`). Only overridden by passing mds_location explicitly.
+_MDSIP_RELAY_PREFIX = "mdsip"
+
+
+def _derive_fdp_mds_location(device: str = "d3d"):
+    """Return the ``fdp://`` mdsip URL for ``device``, or None if underivable.
+
+    The FDP catalog names the origin as ``root://host:port``; the mdsip relay is
+    the same host and port under the ``fdp://`` scheme, which MDSplus resolves to
+    the mdsip-fdp transport. Returning None makes the caller fall back to reading
+    tree files over Pelican.
+    """
+    try:
+        from fdp import catalog
+
+        origin = catalog[device].schema.origin_server
+    except Exception as e:  # catalog absent, device unknown, schema changed
+        logger.debug("FDP: could not derive an mdsip URL for {d}: {e}", d=device, e=e)
+        return None
+    if not origin:
+        return None
+    netloc = urlparse(origin).netloc or origin.split("://", 1)[-1]
+    return f"fdp://{netloc}/{_MDSIP_RELAY_PREFIX}"
 
 
 def _parse_ptdata_pointname(path: str):
@@ -80,12 +134,41 @@ class ProcessFDPConnection(ProcessConnection):
     Process-level FDP connection factory.
 
     Holds no heavy per-process state: PtDataSignal reuses a per-process
-    PtDataReader internally (toksearch_d3d >= 0.10.0) and MdsSignal opens trees
-    per fetch. ``options`` is reserved for future config knobs.
+    PtDataReader internally (toksearch_d3d >= 0.10.0) and MdsSignal manages its
+    own connections. Remaining ``options`` are reserved for future config knobs.
+
+    Parameters
+    ----------
+    mds_location : str, optional
+        Transport for MDSplus reads -- ``"auto"`` (default, an ``fdp://`` mdsip
+        URL derived from the FDP catalog), ``"pelican"`` (tree files over
+        Pelican), or a location string passed to ``MdsSignal`` verbatim. See the
+        module docstring.
+    device : str, optional
+        FDP catalog device name used to derive the ``"auto"`` URL. Defaults to
+        ``"d3d"``.
     """
 
-    def __init__(self, **options: Any):
+    def __init__(self, mds_location: str = "auto", device: str = "d3d", **options: Any):
+        self.device = device
+        self.mds_location = self._resolve_mds_location(mds_location, device)
         self.options = options
+
+    @staticmethod
+    def _resolve_mds_location(mds_location: str, device: str):
+        """Turn the ``mds_location`` setting into a concrete MdsSignal location."""
+        if mds_location == "pelican":
+            return None
+        if mds_location != "auto":
+            return mds_location
+        derived = _derive_fdp_mds_location(device)
+        if derived is None:
+            logger.warning(
+                "FDP: no origin in the catalog for {d}; MDSplus reads fall back to "
+                "tree files over Pelican, where PTDATA2-backed nodes are unavailable.",
+                d=device,
+            )
+        return derived
 
     @classmethod
     def from_config(cls, tokamak: Tokamak) -> "ProcessFDPConnection":
@@ -95,14 +178,17 @@ class ProcessFDPConnection(ProcessConnection):
 
     def get_shot_connection(self, shot_id: int) -> "FDPDataConnection":
         """Create a per-shot FDP data connection."""
-        return FDPDataConnection(shot_id)
+        return FDPDataConnection(shot_id, mds_location=self.mds_location)
 
 
 class FDPDataConnection(TreeNicknameMixin, DataConnection):
     """Per-shot FDP data connection dispatching to PtDataSignal / MdsSignal."""
 
-    def __init__(self, shot_id: int):
+    def __init__(self, shot_id: int, mds_location: str = None):
         self._shot_id = shot_id
+        # None => MdsSignal reads tree files over Pelican; an fdp:// URL => the
+        # origin's mdsip relay evaluates TDI server-side.
+        self._mds_location = mds_location
         self.tree_nickname_funcs = {}
         self.tree_nicknames = {}
 
@@ -140,20 +226,22 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
                 ) from e
             return result, ("times",)
 
-        if path in _PTDATA2_BACKED_NODES:
+        # Only meaningful on the Pelican tree-file path, where TDI is evaluated
+        # client-side. Over fdp:// the origin evaluates the record.
+        if self._mds_location is None and path in _PTDATA2_BACKED_NODES:
             raise FdpFetchError(
-                f"{path!r}: PTDATA2-backed node is not yet supported over FDP "
-                "(would hang in the Pelican/XRootD env). Deferred to the PTDATA2 "
-                "follow-up; see PTDATA2_HANDOFF.md."
+                f"{path!r}: not resolvable over Pelican tree-file reads. Use the "
+                'default mds_location="auto" (fdp:// mdsip) instead.'
             )
 
         resolved_tree = self.tree_name(tree_name)
         dim_names = self._ordered_dim_names(dim_nums)
         logger.trace(
-            shot_msg("FDP mds fetch: {p} @ {t}"),
+            shot_msg("FDP mds fetch: {p} @ {t} via {loc}"),
             shot=self._shot_id,
             p=path,
             t=resolved_tree,
+            loc=self._mds_location or "pelican tree files",
         )
         try:
             # NOTE: multi-dim (e.g. \psirz, dim_nums=[2]) forwards positional dim
@@ -161,7 +249,7 @@ class FDPDataConnection(TreeNicknameMixin, DataConnection):
             # >1-D nodes must be validated against real data (integration test); if
             # the axis order differs, thread a data_order kwarg through here.
             result = MdsSignal(
-                path, resolved_tree, location=None, dims=dim_names
+                path, resolved_tree, location=self._mds_location, dims=dim_names
             ).fetch(self._shot_id)
         except Exception as e:
             raise FdpFetchError(
