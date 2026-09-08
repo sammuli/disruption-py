@@ -39,14 +39,21 @@ from disruption_py.inout.mds import ProcessMDSConnection
 
 # The FDP origin's mdsip relay speaks the ordinary MDSplus thin-client protocol,
 # so the stock MDSConnection works against it unchanged -- only the connection
-# string differs from the "atlas" default. Derived from the FDP catalog so the
-# host/port is not hard-coded here.
+# string differs from the "atlas" default.
+FDP_D3D = "fdp://fdp-d3d-origin.nationalresearchplatform.org:8443/mdsip"
+
+
+# Must be a module-level function, not a lambda: connection_initializer is
+# pickled to the worker processes when num_processes > 1.
 def fdp_connection():
     """Stock MDSplus connection, pointed at the DIII-D FDP origin."""
-    from fdp import catalog
-
-    origin = catalog["d3d"].schema.origin_server  # root://host:port
-    return ProcessMDSConnection("fdp://" + origin.split("://", 1)[-1] + "/mdsip")
+    # If you have the `fdp` package installed you can derive this instead of
+    # hard-coding it:
+    #     from fdp import catalog
+    #     origin = catalog["d3d"].schema.origin_server   # root://host:port
+    #     url = "fdp://" + origin.split("://", 1)[-1] + "/mdsip"
+    # It is not a dependency of this example.
+    return ProcessMDSConnection(FDP_D3D)
 
 from disruption_py.machine.tokamak import Tokamak
 from disruption_py.settings import RetrievalSettings

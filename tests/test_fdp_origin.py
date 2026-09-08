@@ -22,15 +22,14 @@ pytestmark = pytest.mark.skipif(
 SHOT = 161228  # known good DIII-D plasma shot
 
 
+FDP_D3D = "fdp://fdp-d3d-origin.nationalresearchplatform.org:8443/mdsip"
+
+
 @pytest.fixture(scope="module")
 def conn():
     """A stock MDSplus thin-client connection to the DIII-D FDP origin."""
     MDSplus = pytest.importorskip("MDSplus")
-    catalog = pytest.importorskip("fdp").catalog
-
-    origin = catalog["d3d"].schema.origin_server  # root://host:port
-    url = "fdp://" + origin.split("://", 1)[-1] + "/mdsip"
-    return MDSplus.Connection(url)
+    return MDSplus.Connection(FDP_D3D)
 
 
 def _finite(result):

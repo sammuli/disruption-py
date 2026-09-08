@@ -23,7 +23,11 @@ dependencies:
   - mdsip-fdp
 
   # Provides `pelican`, used to mint a bearer token. See docs/usage/fdp.md.
+  # Not needed if someone hands you a token file for ~/.fdp/token.
   - pelicanplatform
+
+  # For tests/test_fdp_origin.py, the opt-in check that the origin is reachable.
+  - pytest
 
   - pip
   - pip:

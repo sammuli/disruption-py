@@ -31,18 +31,29 @@ MDSplus loads the transport by name — it uppercases a URL's scheme, builds
 `"MdsIp" + SCHEME`, and `dlopen`s the result from beside `libMdsShr.so`. The
 conda package puts it there for you.
 
-### 2. Get a token
+### 2. Authenticate
 
-**Run this in a real terminal** — pelican refuses to start a new consent flow
-when its stdout is not a TTY:
+The transport needs a bearer token. If someone has given you one — the usual
+case for a collaborator — put it at `~/.fdp/token` and export it:
+
+```bash
+mkdir -p ~/.fdp && chmod 700 ~/.fdp
+cp /path/to/the/token ~/.fdp/token && chmod 600 ~/.fdp/token
+export BEARER_TOKEN=$(cat ~/.fdp/token)
+```
+
+The transport also reads `~/.fdp/token` on its own if `BEARER_TOKEN` is unset,
+so the export is belt-and-braces — but it makes the dependency explicit, and it
+is what you want in a job script. Tokens are typically good for about a month.
+
+To mint one yourself instead, **in a real terminal** (pelican refuses a new
+consent flow when its stdout is not a TTY):
 
 ```bash
 pelican credentials token get read pelican://osg-htc.org:443/fdp-d3d
-export BEARER_TOKEN="<the JWT it prints>"
 ```
 
-Add `--json` to get a JSON object instead and read its `access_token` key.
-Tokens are typically good for about a month.
+Add `--json` for a JSON object and read its `access_token` key.
 
 > If you are inside the GA FDP development environment instead, `pixi.toml` in
 > the repo root pulls the full stack and wraps both steps: `pixi install`, then
